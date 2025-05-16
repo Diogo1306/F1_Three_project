@@ -14,8 +14,7 @@ function main() {
   document.body.appendChild(renderer.domElement);
 
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 1, 0);
-  controls.update();
+  controls.enableDamping = true;
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(ambientLight);
@@ -26,26 +25,34 @@ function main() {
 
   const loader = new GLTFLoader();
 
-  let isWPressed = false;
-  let isSPressed = false;
-  let wheelRotationSpeed = 0;
-  const maxSpeed = 10;
-  const acceleration = 0.02;
-  const deceleration = 0.03;
-  const speed = 0;
+  let keys = { w: false, s: false, a: false, d: false };
+
+  let speed = 0;
+  const maxSpeed = 2.2;
+  const maxReverseSpeed = -0.1;
+  const acceleration = 0.01;
+  const braking = 0.008;
+  const friction = 0.006;
+  const turnSpeed = 0.03;
 
   let frontWheels = [];
   let backWheels = [];
+  let steeringWheel = null;
   let carModel = null;
+  let carRotationY = Math.PI / -2;
 
   document.addEventListener("keydown", (event) => {
-    if (event.code === "KeyW") isWPressed = true;
-    if (event.code === "KeyS") isSPressed = true;
+    if (event.code === "KeyW") keys.w = true;
+    if (event.code === "KeyS") keys.s = true;
+    if (event.code === "KeyA") keys.a = true;
+    if (event.code === "KeyD") keys.d = true;
   });
 
   document.addEventListener("keyup", (event) => {
-    if (event.code === "KeyW") isWPressed = false;
-    if (event.code === "KeyS") isSPressed = false;
+    if (event.code === "KeyW") keys.w = false;
+    if (event.code === "KeyS") keys.s = false;
+    if (event.code === "KeyA") keys.a = false;
+    if (event.code === "KeyD") keys.d = false;
   });
 
   loader.load("resources/model/f1_bahrain_lowpoly_circuit.glb", (gltf) => {
@@ -60,14 +67,17 @@ function main() {
     scene.add(carModel);
 
     carModel.position.set(-200, 0, 378);
-    carModel.rotation.set(0, Math.PI / -2, 0);
+    carModel.rotation.set(0, carRotationY, 0);
 
     carModel.traverse((child) => {
-      console.log("Objeto:", child.name);
+      if (child.name) {
+        console.log(`Nome: ${child.name}`);
+      }
     });
 
     const backWheelsGroup = carModel.getObjectByName("back_wheels_1");
     const frontWheelsGroup = carModel.getObjectByName("front_wheels_7");
+    const steeringWheel = carModel.getObjectByName("steering_wheel_1");
 
     if (backWheelsGroup) backWheels = backWheelsGroup.children;
     if (frontWheelsGroup) frontWheels = frontWheelsGroup.children;
@@ -77,33 +87,51 @@ function main() {
     requestAnimationFrame(animate);
 
     if (carModel) {
-      if (isWPressed) {
-        wheelRotationSpeed += acceleration;
-        carModel.position.x -= 0.5;
-      } else if (isSPressed) {
-        wheelRotationSpeed -= deceleration;
-        carModel.position.x += 0.5;
+      if (keys.w) {
+        speed += acceleration;
+      } else if (keys.s) {
+        speed -= braking;
       } else {
-        if (wheelRotationSpeed > 0) {
-          wheelRotationSpeed = speed;
-          wheelRotationSpeed -= speed / 0.2;
-          carModel.position.x -= 0.3;
+        if (speed > 0) {
+          speed -= friction;
+          if (speed < 0) speed = 0;
+        } else if (speed < 0) {
+          speed += friction;
+          if (speed > 0) speed = 0;
         }
-        wheelRotationSpeed -= deceleration;
       }
 
-      wheelRotationSpeed = Math.max(0, Math.min(wheelRotationSpeed, maxSpeed));
+      speed = Math.max(maxReverseSpeed, Math.min(speed, maxSpeed));
 
-      frontWheels.forEach((wheel) => {
-        wheel.rotation.x += wheelRotationSpeed;
-      });
-      backWheels.forEach((wheel) => {
-        wheel.rotation.x += wheelRotationSpeed;
-      });
+      if (speed !== 0) {
+        const turnFactor = turnSpeed * (1 - Math.min(Math.abs(speed) / maxSpeed, 2));
+        if (speed > 0) {
+          if (keys.a) carRotationY += turnFactor + 0.004;
+          if (keys.d) carRotationY -= turnFactor + 0.004;
+        } else {
+          if (keys.a) carRotationY -= turnFactor / 5;
+          if (keys.d) carRotationY += turnFactor / 5;
+        }
+        if (keys.a || keys.d) {
+          speed *= 0.995;
+        }
+      }
 
-      const carPosition = carModel.position;
-      camera.position.set(carPosition.x + 5, carPosition.y + 5, carPosition.z + 10);
-      camera.lookAt(carPosition.x, carPosition.y + 1, carPosition.z);
+      carModel.rotation.y = carRotationY;
+
+      const direction = new THREE.Vector3(Math.sin(carRotationY), 0, Math.cos(carRotationY));
+      carModel.position.add(direction.multiplyScalar(speed));
+
+      const wheelRotation = speed * 0.5;
+      frontWheels.forEach((wheel) => (wheel.rotation.x += wheelRotation));
+      backWheels.forEach((wheel) => (wheel.rotation.x += wheelRotation));
+
+      const cameraOffset = new THREE.Vector3(Math.sin(carRotationY), 0, Math.cos(carRotationY)).multiplyScalar(-12);
+      cameraOffset.y = 5;
+
+      const carPos = carModel.position.clone();
+      camera.position.copy(carPos.clone().add(cameraOffset));
+      camera.lookAt(carPos.clone().add(new THREE.Vector3(0, 2, 0)));
     }
 
     renderer.render(scene, camera);
@@ -111,4 +139,5 @@ function main() {
 
   animate();
 }
+
 main();

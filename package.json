@@ -1,8 +1,6 @@
 {
-<<<<<<< HEAD
   "name": "f1_three_project",
   "version": "1.0.0",
-  "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -11,10 +9,18 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-=======
->>>>>>> 38742e3b34e6a8d8b032cfaf6273c34ba57f1555
   "dependencies": {
+    "cannon-es": "^0.20.0",
     "three": "^0.176.0",
     "vite": "^6.3.5"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Diogo1306/F1_Three_project.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Diogo1306/F1_Three_project/issues"
+  },
+  "homepage": "https://github.com/Diogo1306/F1_Three_project#readme",
+  "description": ""
 }

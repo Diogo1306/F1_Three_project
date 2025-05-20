@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
+main();
+
 function main() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xaaaaaa);
@@ -30,17 +32,18 @@ function main() {
   const frameDuration = 1 / desiredFPS;
   let accumulator = 0;
 
+  const velocidadeDiv = document.getElementById("velocidade");
+
   let speed = 0;
-  const maxSpeed = 2.2;
+  const maxSpeed = 4;
   const maxReverseSpeed = -0.1;
   const acceleration = 0.01;
-  const braking = 0.008;
+  const braking = 0.015;
   const friction = 0.006;
-  const turnSpeed = 0.03;
+  const turnSpeed = 0.02;
 
   let carModel = null;
   let carRotationY = 0;
-
   let frontWheels = [];
   let backWheels = [];
   let steeringWheel = null;
@@ -61,11 +64,11 @@ function main() {
     if (event.code === "KeyD") keys.d = false;
   });
 
-  loader.load("resources/model/f1_bahrain_lowpoly_circuit.glb", (gltf) => {
-    const track = gltf.scene;
-    track.position.set(0, -25, 0);
-    track.scale.set(3, 3, 3);
-    scene.add(track);
+  loader.load("resources/model/recetrack.glb", (gltf) => {
+    const trackModel = gltf.scene;
+    trackModel.position.set(0, -25, 0);
+    trackModel.scale.set(3, 3, 3);
+    scene.add(trackModel);
   });
 
   loader.load("resources/model/low_poly_f1_car.glb", (gltf) => {
@@ -75,18 +78,6 @@ function main() {
     carRotationY = Math.PI / 2;
     carModel.rotation.y = carRotationY;
     scene.add(carModel);
-
-    function printChildNames(object, prefix = "") {
-      object.children.forEach((child) => {
-        const name = child.name ? child.name : "(sem nome)";
-        console.log(`${prefix}${name}`);
-        if (child.children.length > 0) {
-          printChildNames(child, prefix + "  ");
-        }
-      });
-    }
-
-    printChildNames(carModel);
 
     const wheelFL = carModel.getObjectByName("WheelFront000");
     const wheelFR = carModel.getObjectByName("WheelFront001");
@@ -128,11 +119,12 @@ function main() {
     requestAnimationFrame(animate);
     const delta = clock.getDelta();
     accumulator += delta;
-
     if (accumulator < frameDuration) return;
     accumulator = 0;
 
     if (carModel) {
+      const direction = new THREE.Vector3(-Math.sin(carRotationY), 0, -Math.cos(carRotationY));
+
       if (keys.w) speed += acceleration;
       else if (keys.s) speed -= braking;
       else {
@@ -148,17 +140,15 @@ function main() {
           if (keys.a) carRotationY += turnFactor;
           if (keys.d) carRotationY -= turnFactor;
         } else {
-          if (keys.a) carRotationY -= turnFactor / 4;
-          if (keys.d) carRotationY += turnFactor / 4;
+          if (keys.a) carRotationY -= turnFactor / 5;
+          if (keys.d) carRotationY += turnFactor / 5;
         }
 
         if (keys.a || keys.d) speed *= 0.995;
       }
 
       carModel.rotation.y = carRotationY;
-
-      const direction = new THREE.Vector3(-Math.sin(carRotationY), 0, -Math.cos(carRotationY));
-      carModel.position.add(direction.multiplyScalar(speed));
+      carModel.position.add(direction.clone().multiplyScalar(speed));
 
       const wheelRotation = speed * 0.5;
       frontWheels.forEach((wheel) => (wheel.rotation.x += wheelRotation));
@@ -176,6 +166,9 @@ function main() {
         steeringWheel.rotation.y = steerAngle * 2;
       }
 
+      const velocidadeKmH = (speed / maxSpeed) * 360;
+      velocidadeDiv.innerText = `Velocidade: ${velocidadeKmH.toFixed(0)} km/h`;
+
       const carDirection = new THREE.Vector3(-Math.sin(carRotationY), 0, -Math.cos(carRotationY));
       const cameraOffset = carDirection.clone().multiplyScalar(-12);
       cameraOffset.y = 5;
@@ -192,5 +185,3 @@ function main() {
 
   animate();
 }
-
-main();

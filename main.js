@@ -1,12 +1,45 @@
 import * as THREE from "three";
+import * as CANNON from "cannon-es";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import CannonDebugger from "cannon-es-debugger";
+
+const keys = { w: false, s: false, a: false, d: false, " ": false };
 
 main();
 
 function main() {
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+
+  const groundMaterial = new CANNON.Material("ground");
+  const wheelMaterial = new CANNON.Material("wheel");
+  const contactMaterial = new CANNON.ContactMaterial(groundMaterial, wheelMaterial, {
+    friction: 0.3,
+    restitution: 0.3,
+  });
+  world.defaultContactMaterial.friction = 0.4;
+  world.addContactMaterial(contactMaterial);
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xaaaaaa);
+
+  function createTrimesh(geometry) {
+    const posAttr = geometry.getAttribute("position");
+    const indexAttr = geometry.getIndex();
+
+    if (!posAttr || !indexAttr) return null;
+
+    const positions = posAttr.array;
+    const indices = indexAttr.array;
+
+    if (!positions || !indices || positions.length === 0 || indices.length === 0) return null;
+
+    for (let i = 0; i < positions.length; i++) {
+      if (isNaN(positions[i])) return null;
+    }
+
+    return new CANNON.Trimesh(Array.from(positions), Array.from(indices));
+  }
 
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 5, -10);
@@ -24,164 +57,168 @@ function main() {
   directionalLight.position.set(5, 10, 7.5);
   scene.add(directionalLight);
 
-  const loader = new GLTFLoader();
-
-  let keys = { w: false, s: false, a: false, d: false };
   const clock = new THREE.Clock();
-  const desiredFPS = 120;
-  const frameDuration = 1 / desiredFPS;
-  let accumulator = 0;
-
-  const velocidadeDiv = document.getElementById("velocidade");
-
-  let speed = 0;
-  const maxSpeed = 4;
-  const maxReverseSpeed = -0.1;
-  const acceleration = 0.01;
-  const braking = 0.015;
-  const friction = 0.006;
-  const turnSpeed = 0.02;
+  let animateModel = null;
 
   let carModel = null;
-  let carRotationY = 0;
-  let frontWheels = [];
-  let backWheels = [];
-  let steeringWheel = null;
+  let chassisBody = null;
+  let isReady = false;
+  let vehicle = null;
+  const rayHelpers = [];
+  let carWrapper = null;
 
-  let frontLeftGroup, frontRightGroup;
+  const gltfLoader = new GLTFLoader();
 
-  document.addEventListener("keydown", (event) => {
-    if (event.code === "KeyW") keys.w = true;
-    if (event.code === "KeyS") keys.s = true;
-    if (event.code === "KeyA") keys.a = true;
-    if (event.code === "KeyD") keys.d = true;
+  gltfLoader.load("resources/models/cartoon_race_track_spielberg.glb", (gltf) => {
+    const track = gltf.scene;
+    track.scale.set(1, 1, 1);
+    scene.add(track);
+
+    track.updateMatrixWorld(true);
+    track.traverse((child) => {
+      if (child.isMesh && child.geometry) {
+        const geometry = child.geometry.clone();
+        geometry.applyMatrix4(child.matrixWorld);
+        const shape = createTrimesh(geometry);
+        if (shape) {
+          const body = new CANNON.Body({ mass: 0, material: groundMaterial });
+          body.addShape(shape);
+          world.addBody(body);
+        }
+      }
+    });
   });
 
-  document.addEventListener("keyup", (event) => {
-    if (event.code === "KeyW") keys.w = false;
-    if (event.code === "KeyS") keys.s = false;
-    if (event.code === "KeyA") keys.a = false;
-    if (event.code === "KeyD") keys.d = false;
-  });
-
-  loader.load("resources/model/recetrack.glb", (gltf) => {
-    const trackModel = gltf.scene;
-    trackModel.position.set(0, -25, 0);
-    trackModel.scale.set(3, 3, 3);
-    scene.add(trackModel);
-  });
-
-  loader.load("resources/model/low_poly_f1_car.glb", (gltf) => {
+  gltfLoader.load("resources/models/low_poly_f1_car.glb", (gltf) => {
     carModel = gltf.scene;
-    carModel.scale.set(0.04, 0.04, 0.04);
-    carModel.position.set(-200, 0, 378);
-    carRotationY = Math.PI / 2;
-    carModel.rotation.y = carRotationY;
-    scene.add(carModel);
+    carModel.scale.set(0.02, 0.02, 0.02);
+    carModel.rotation.y = Math.PI;
+
+    carWrapper = new THREE.Object3D();
+    carWrapper.add(carModel);
+    carModel.position.set(0, -0.35, 0);
+    scene.add(carWrapper);
 
     const wheelFL = carModel.getObjectByName("WheelFront000");
     const wheelFR = carModel.getObjectByName("WheelFront001");
     const wheelBL = carModel.getObjectByName("WheelFront002");
     const wheelBR = carModel.getObjectByName("WheelFront003");
-    steeringWheel = carModel.getObjectByName("steering_wheel_1");
 
-    if (wheelFL && wheelFR && wheelBL && wheelBR) {
-      frontLeftGroup = new THREE.Group();
-      frontRightGroup = new THREE.Group();
+    [wheelFL, wheelFR, wheelBL, wheelBR].forEach((w) => (w.visible = true));
 
-      const parentFL = wheelFL.parent;
-      const parentFR = wheelFR.parent;
+    const spawnY = 1.0;
+    chassisBody = new CANNON.Body({
+      mass: 1200,
+      position: new CANNON.Vec3(-23, spawnY, 2.2),
+      quaternion: new CANNON.Quaternion().setFromEuler(0, -Math.PI / 2, 0), // rotação
+      shape: new CANNON.Box(new CANNON.Vec3(0.6, 0.15, 1.25)),
+    });
+    world.addBody(chassisBody);
 
-      parentFL.remove(wheelFL);
-      parentFR.remove(wheelFR);
+    vehicle = new CANNON.RaycastVehicle({
+      chassisBody,
+      indexRightAxis: 0,
+      indexUpAxis: 1,
+      indexForwardAxis: 2,
+    });
 
-      const posFL = wheelFL.position.clone();
-      const posFR = wheelFR.position.clone();
+    const wheelPositions = [
+      new CANNON.Vec3(-0.6, 0.15, 1.1),
+      new CANNON.Vec3(0.6, 0.15, 1.1),
+      new CANNON.Vec3(-0.6, 0.15, -1.1),
+      new CANNON.Vec3(0.6, 0.15, -1.1),
+    ];
 
-      wheelFL.position.set(0, 0, 0);
-      wheelFR.position.set(0, 0, 0);
+    const wheelOptions = {
+      radius: 0.2,
+      directionLocal: new CANNON.Vec3(0, -1, 0),
+      suspensionStiffness: 60,
+      suspensionRestLength: 0.045,
+      suspensionMaxLength: 0.2,
+      frictionSlip: 2.5,
+      dampingRelaxation: 2.0,
+      dampingCompression: 4.5,
+      maxSuspensionForce: 100000,
+      rollInfluence: 0.05,
+      axleLocal: new CANNON.Vec3(-1, 0, 0),
+      maxSuspensionTravel: 0.08,
+      customSlidingRotationalSpeed: -30,
+      useCustomSlidingRotationalSpeed: true,
+      forwardAcceleration: 1,
+      sideAcceleration: 1,
+      isFrontWheel: true,
+    };
 
-      frontLeftGroup.add(wheelFL);
-      frontRightGroup.add(wheelFR);
+    wheelPositions.forEach((pos) => {
+      wheelOptions.chassisConnectionPointLocal = pos.clone();
+      vehicle.addWheel({ ...wheelOptions });
+    });
 
-      frontLeftGroup.position.copy(posFL);
-      frontRightGroup.position.copy(posFR);
+    vehicle.addToWorld(world);
 
-      parentFL.add(frontLeftGroup);
-      parentFR.add(frontRightGroup);
+    animateModel = () => {
+      carWrapper.position.copy(chassisBody.position);
+      carWrapper.quaternion.copy(chassisBody.quaternion);
 
-      frontWheels = [wheelFL, wheelFR];
-      backWheels = [wheelBL, wheelBR];
-    }
+      const offset = new THREE.Vector3(0, 2.5, -5).applyQuaternion(carWrapper.quaternion);
+      camera.position.copy(carWrapper.position).add(offset);
+      camera.lookAt(carWrapper.position);
+    };
+
+    isReady = true;
   });
 
   function animate() {
     requestAnimationFrame(animate);
+    if (!isReady) return;
+
     const delta = clock.getDelta();
-    accumulator += delta;
-    if (accumulator < frameDuration) return;
-    accumulator = 0;
+    world.step(1 / 120, delta);
 
-    if (carModel) {
-      const direction = new THREE.Vector3(-Math.sin(carRotationY), 0, -Math.cos(carRotationY));
+    if (vehicle && carModel) {
+      animateModel();
 
-      if (keys.w) speed += acceleration;
-      else if (keys.s) speed -= braking;
-      else {
-        if (speed > 0) speed = Math.max(0, speed - friction);
-        else if (speed < 0) speed = Math.min(0, speed + friction);
+      const force = 6000;
+      const steer = 0.4;
+
+      const brakeForce = 3000;
+
+      if (keys[" "]) {
+        for (let i = 0; i < 4; i++) vehicle.setBrake(brakeForce, i);
+      } else {
+        for (let i = 0; i < 4; i++) vehicle.setBrake(0, i);
       }
 
-      speed = Math.max(maxReverseSpeed, Math.min(speed, maxSpeed));
-
-      if (speed !== 0) {
-        const turnFactor = turnSpeed * (1 - Math.min(Math.abs(speed) / maxSpeed, 2));
-        if (speed > 0) {
-          if (keys.a) carRotationY += turnFactor;
-          if (keys.d) carRotationY -= turnFactor;
-        } else {
-          if (keys.a) carRotationY -= turnFactor / 5;
-          if (keys.d) carRotationY += turnFactor / 5;
-        }
-
-        if (keys.a || keys.d) speed *= 0.995;
+      if (keys.w) {
+        vehicle.applyEngineForce(-force, 2);
+        vehicle.applyEngineForce(-force, 3);
       }
-
-      carModel.rotation.y = carRotationY;
-      carModel.position.add(direction.clone().multiplyScalar(speed));
-
-      const wheelRotation = speed * 0.5;
-      frontWheels.forEach((wheel) => (wheel.rotation.x += wheelRotation));
-      backWheels.forEach((wheel) => (wheel.rotation.x += wheelRotation));
-
-      const maxSteerAngle = 0.4;
-      let steerAngle = 0;
-      if (keys.a) steerAngle = maxSteerAngle;
-      else if (keys.d) steerAngle = -maxSteerAngle;
-
-      if (frontLeftGroup) frontLeftGroup.rotation.y = steerAngle;
-      if (frontRightGroup) frontRightGroup.rotation.y = steerAngle;
-
-      if (steeringWheel) {
-        steeringWheel.rotation.y = steerAngle * 2;
+      if (keys.s) {
+        vehicle.applyEngineForce(force, 3);
+        vehicle.applyEngineForce(force, 3);
       }
-
-      const velocidadeKmH = (speed / maxSpeed) * 360;
-      velocidadeDiv.innerText = `Velocidade: ${velocidadeKmH.toFixed(0)} km/h`;
-
-      const carDirection = new THREE.Vector3(-Math.sin(carRotationY), 0, -Math.cos(carRotationY));
-      const cameraOffset = carDirection.clone().multiplyScalar(-12);
-      cameraOffset.y = 5;
-
-      const carPos = carModel.position.clone();
-      const cameraPos = carPos.clone().add(cameraOffset);
-
-      camera.position.copy(cameraPos);
-      camera.lookAt(carPos.clone().add(new THREE.Vector3(0, 2, 0)));
+      if (keys.a) {
+        vehicle.setSteeringValue(steer, 0);
+        vehicle.setSteeringValue(steer, 1);
+      } else if (keys.d) {
+        vehicle.setSteeringValue(-steer, 0);
+        vehicle.setSteeringValue(-steer, 1);
+      } else {
+        vehicle.setSteeringValue(0, 0);
+        vehicle.setSteeringValue(0, 1);
+      }
     }
 
     renderer.render(scene, camera);
   }
 
   animate();
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = true;
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = false;
+  });
 }

@@ -21,14 +21,14 @@ function main() {
   const groundMaterial = new CANNON.Material("ground");
   const wheelMaterial = new CANNON.Material("wheel");
   const contactMaterial = new CANNON.ContactMaterial(groundMaterial, wheelMaterial, {
-    friction: 0.3,
-    restitution: 0.3,
+    friction: 1,
+    restitution: 0.001,
   });
   world.defaultContactMaterial.friction = 0.4;
   world.addContactMaterial(contactMaterial);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xaaaaaa);
+  scene.background = new THREE.Color(0x151729);
 
   function createTrimesh(geometry) {
     const posAttr = geometry.getAttribute("position");
@@ -68,6 +68,10 @@ function main() {
   let vehicle = null;
   let carWrapper = null;
 
+  const cannonDebugger = new CannonDebugger(scene, world, {
+    color: 0x00ff00,
+  });
+
   const gltfLoader = new GLTFLoader();
 
   gltfLoader.load("resources/models/cartoon_race_track_spielberg.glb", (gltf) => {
@@ -96,6 +100,7 @@ function main() {
     carModel.rotation.y = Math.PI;
 
     carWrapper = new THREE.Object3D();
+    carModel.visible = true;
     carWrapper.add(carModel);
     carModel.position.set(0, -0.35, 0);
     scene.add(carWrapper);
